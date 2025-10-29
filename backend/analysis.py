@@ -12,6 +12,9 @@ from PIL import Image
 import cv2
 from scipy import stats
 from skimage.metrics import structural_similarity as ssim
+import matplotlib
+# Use a non-interactive backend suitable for servers
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import io
 
@@ -87,15 +90,17 @@ class SteganalysisEngine:
             
             # Chi-square test
             chi2_stat, p_value = stats.chisquare(observed, expected)
-            
+
             # Calculate deviation from expected
             deviation = abs(observed[0] - observed[1]) / total_pixels
-            
+
+            suspicious_bool = bool((float(p_value) < 0.05) and (float(deviation) > 0.1))
+
             results[channel_name] = {
                 "chi2_statistic": float(chi2_stat),
                 "p_value": float(p_value),
                 "deviation": float(deviation),
-                "suspicious": p_value < 0.05 and deviation > 0.1
+                "suspicious": suspicious_bool
             }
         
         return results
@@ -136,9 +141,9 @@ class SteganalysisEngine:
             
             results[channel_name] = {
                 "rs_score": float(rs_score),
-                "regular_pairs": regular_pairs,
-                "singular_pairs": singular_pairs,
-                "suspicious": rs_score > 0.1
+                "regular_pairs": int(regular_pairs),
+                "singular_pairs": int(singular_pairs),
+                "suspicious": bool(rs_score > 0.1)
             }
         
         return results
@@ -186,7 +191,7 @@ class SteganalysisEngine:
                 "lsb_std": float(std_variance),
                 "higher_bit_variance": float(higher_bit_variance),
                 "variance_ratio": float(variance_ratio),
-                "suspicious": variance_ratio > 2.0 or variance_ratio < 0.5
+                "suspicious": bool((float(variance_ratio) > 2.0) or (float(variance_ratio) < 0.5))
             }
         
         return results

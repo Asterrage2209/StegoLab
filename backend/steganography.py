@@ -68,24 +68,32 @@ class SteganographyEngine:
         if len(payload_data) > capacity:
             raise ValueError(f"Payload too large: {len(payload_data)} bytes > {capacity} bytes capacity")
         
-        # Prepare payload with header
-        payload_with_header = self._create_payload_with_header(payload_data, encrypt, password)
-        
-        # Encrypt if requested
+        # Prepare payload (optionally encrypted) with header
         if encrypt and password:
-            payload_with_header = self._encrypt_payload(payload_with_header, password)
+            encrypted_payload = self._encrypt_payload(payload_data, password)
+            crc_plain = zlib.crc32(payload_data) & 0xffffffff
+            payload_with_header = self._create_payload_with_header(encrypted_payload, plaintext_crc32=crc_plain)
+        else:
+            payload_with_header = self._create_payload_with_header(payload_data)
         
         # Convert image to numpy array
         img_array = np.array(carrier_img)
         original_array = img_array.copy()
         
+        # Determine channel indices
+        selected_channels = self._get_channel_indices(channels)
+
+        # Calculate how many positions are needed (each position carries `bits` bits)
+        total_bits = len(payload_with_header) * 8
+        positions_needed = (total_bits + bits - 1) // bits
+
         # Generate embedding positions
         positions = self._generate_embedding_positions(
-            img_array.shape, len(payload_with_header), password
+            img_array.shape, positions_needed, password, selected_channels, start_index=0
         )
         
         # Embed data
-        self._embed_data(img_array, payload_with_header, positions, bits, channels)
+        self._embed_data(img_array, payload_with_header, positions, bits)
         
         # Create stego image
         stego_img = Image.fromarray(img_array)
@@ -139,6 +147,7 @@ class SteganographyEngine:
         """
         if channels is None:
             channels = ['red', 'green', 'blue']
+        selected_channels = self._get_channel_indices(channels)
         
         # Load stego image
         stego_img = Image.open(stego_path)
@@ -148,11 +157,13 @@ class SteganographyEngine:
         img_array = np.array(stego_img)
         
         # Extract header first
+        header_bits = self.HEADER_SIZE * 8
+        header_positions_needed = (header_bits + bits - 1) // bits
         header_positions = self._generate_embedding_positions(
-            img_array.shape, self.HEADER_SIZE, password
+            img_array.shape, header_positions_needed, password, selected_channels, start_index=0
         )
         
-        header_data = self._extract_data(img_array, header_positions, bits, channels, self.HEADER_SIZE)
+        header_data = self._extract_data(img_array, header_positions, bits, self.HEADER_SIZE)
         
         # Validate header
         if not self._validate_header(header_data):
@@ -162,11 +173,13 @@ class SteganographyEngine:
         magic, payload_length, crc32, _ = struct.unpack('>4sIII', header_data)
         
         # Extract payload
+        payload_bits = payload_length * 8
+        payload_positions_needed = (payload_bits + bits - 1) // bits
         payload_positions = self._generate_embedding_positions(
-            img_array.shape, payload_length, password, offset=self.HEADER_SIZE
+            img_array.shape, payload_positions_needed, password, selected_channels, start_index=header_positions_needed
         )
         
-        payload_data = self._extract_data(img_array, payload_positions, bits, channels, payload_length)
+        payload_data = self._extract_data(img_array, payload_positions, bits, payload_length)
         
         # Decrypt if needed
         if encrypt and password:
@@ -203,9 +216,11 @@ class SteganographyEngine:
         available_bits = total_bits - (self.HEADER_SIZE * 8)
         return available_bits // 8
     
-    def _create_payload_with_header(self, payload_data: bytes, encrypt: bool, password: Optional[str]) -> bytes:
-        """Create payload with header containing length and checksum."""
-        crc32 = zlib.crc32(payload_data) & 0xffffffff
+    def _create_payload_with_header(self, payload_data: bytes, plaintext_crc32: Optional[int] = None) -> bytes:
+        """Create payload with header containing length and checksum.
+        If plaintext_crc32 is provided, it will be used; otherwise CRC is computed over payload_data.
+        """
+        crc32 = (plaintext_crc32 if plaintext_crc32 is not None else (zlib.crc32(payload_data) & 0xffffffff))
         header = struct.pack('>4sIII', self.MAGIC_BYTES, len(payload_data), crc32, 0)
         return header + payload_data
     
@@ -216,96 +231,104 @@ class SteganographyEngine:
         magic, _, _, _ = struct.unpack('>4sIII', header_data)
         return magic == self.MAGIC_BYTES
     
-    def _generate_embedding_positions(self, 
-                                    img_shape: Tuple[int, ...], 
-                                    data_length: int, 
-                                    password: Optional[str] = None,
-                                    offset: int = 0) -> List[Tuple[int, int, int]]:
-        """Generate positions for embedding data."""
-        height, width, channels = img_shape
-        total_pixels = height * width
-        
-        # Calculate number of pixels needed
-        bits_needed = data_length * 8
-        pixels_needed = (bits_needed + 7) // 8  # Round up
-        
+    def _generate_embedding_positions(self,
+                                      img_shape: Tuple[int, ...],
+                                      positions_needed: int,
+                                      password: Optional[str] = None,
+                                      selected_channels: Optional[List[int]] = None,
+                                      start_index: int = 0) -> List[Tuple[int, int, int]]:
+        """Generate positions for embedding/extracting. Each position corresponds to one (row,col,channel)."""
+        height, width, num_channels = img_shape
+        if selected_channels is None:
+            selected_channels = [0, 1, 2]
+
+        # Build list of all candidate positions
+        all_positions: List[Tuple[int, int, int]] = []
+        for r in range(height):
+            for c in range(width):
+                for ch in selected_channels:
+                    all_positions.append((r, c, ch))
+
+        # Optionally shuffle with password-derived seed
         if password:
-            # Use password to seed random number generator for permutation
             seed = int(hashlib.sha256(password.encode()).hexdigest()[:8], 16)
             rng = random.Random(seed)
-            positions = [(i // width, i % width, i % channels) for i in range(total_pixels)]
-            rng.shuffle(positions)
-            return positions[offset:offset + pixels_needed]
-        else:
-            # Sequential embedding
-            positions = []
-            for i in range(offset, offset + pixels_needed):
-                row = i // width
-                col = i % width
-                channel = i % channels
-                positions.append((row, col, channel))
-            return positions
+            rng.shuffle(all_positions)
+
+        end_index = start_index + positions_needed
+        return all_positions[start_index:end_index]
     
-    def _embed_data(self, 
-                   img_array: np.ndarray, 
-                   data: bytes, 
-                   positions: List[Tuple[int, int, int]], 
-                   bits: int, 
-                   channels: List[str]) -> None:
-        """Embed data into image array at specified positions."""
-        channel_map = {'red': 0, 'green': 1, 'blue': 2}
-        bit_mask = (1 << bits) - 1  # Create mask for LSBs
-        
-        for i, (row, col, channel_idx) in enumerate(positions):
-            if i * 8 >= len(data) * 8:
+    def _embed_data(self,
+                    img_array: np.ndarray,
+                    data: bytes,
+                    positions: List[Tuple[int, int, int]],
+                    bits: int) -> None:
+        """Embed data bits into image array at specified positions. Supports 1 or 2 bits per position."""
+        bit_mask = (1 << bits) - 1
+
+        total_bits = len(data) * 8
+        bit_ptr = 0
+
+        for (row, col, channel_idx) in positions:
+            if bit_ptr >= total_bits:
                 break
-                
-            # Get byte and bit position
-            byte_idx = i // 8
-            bit_idx = i % 8
-            
-            if byte_idx >= len(data):
-                break
-                
-            # Extract bits from data
-            data_byte = data[byte_idx]
-            bits_to_embed = (data_byte >> (7 - bit_idx)) & bit_mask
-            
+
+            # Assemble up to `bits` bits from the data stream (MSB first)
+            val = 0
+            read = 0
+            while read < bits and bit_ptr < total_bits:
+                byte_idx = bit_ptr // 8
+                bit_in_byte = 7 - (bit_ptr % 8)
+                bit = (data[byte_idx] >> bit_in_byte) & 1
+                val = (val << 1) | bit
+                bit_ptr += 1
+                read += 1
+
+            # Pad remaining bits with zeros if we ran out
+            if read < bits:
+                val <<= (bits - read)
+
             # Clear LSBs and embed new bits
             img_array[row, col, channel_idx] &= ~bit_mask
-            img_array[row, col, channel_idx] |= bits_to_embed
+            img_array[row, col, channel_idx] |= val & bit_mask
     
-    def _extract_data(self, 
-                     img_array: np.ndarray, 
-                     positions: List[Tuple[int, int, int]], 
-                     bits: int, 
-                     channels: List[str], 
-                     length: int) -> bytes:
-        """Extract data from image array at specified positions."""
-        channel_map = {'red': 0, 'green': 1, 'blue': 2}
+    def _extract_data(self,
+                      img_array: np.ndarray,
+                      positions: List[Tuple[int, int, int]],
+                      bits: int,
+                      length_bytes: int) -> bytes:
+        """Extract data of given byte length from positions. Supports 1 or 2 bits per position."""
         bit_mask = (1 << bits) - 1
-        result = bytearray()
-        
-        for i in range(length * 8):  # length in bytes, so * 8 for bits
-            if i >= len(positions):
+        total_bits_needed = length_bytes * 8
+        bits_collected: List[int] = []
+
+        for (row, col, channel_idx) in positions:
+            if len(bits_collected) >= total_bits_needed:
                 break
-                
-            row, col, channel_idx = positions[i]
-            
-            # Extract bits from pixel
             pixel_value = img_array[row, col, channel_idx]
-            extracted_bits = pixel_value & bit_mask
-            
-            # Pack bits into bytes
-            byte_idx = i // 8
-            bit_idx = i % 8
-            
-            if byte_idx >= len(result):
-                result.append(0)
-            
-            result[byte_idx] |= (extracted_bits << (7 - bit_idx))
-        
+            val = pixel_value & bit_mask
+            # Append `bits` bits (MSB first)
+            for j in range(bits - 1, -1, -1):
+                bits_collected.append((val >> j) & 1)
+                if len(bits_collected) >= total_bits_needed:
+                    break
+
+        # Convert bits to bytes
+        result = bytearray()
+        for i in range(0, total_bits_needed, 8):
+            byte_val = 0
+            for j in range(8):
+                bit = bits_collected[i + j]
+                byte_val = (byte_val << 1) | bit
+            result.append(byte_val)
         return bytes(result)
+
+    def _get_channel_indices(self, channels: List[str]) -> List[int]:
+        """Map channel names to indices."""
+        channel_map = {'red': 0, 'green': 1, 'blue': 2}
+        if not channels:
+            return [0, 1, 2]
+        return [channel_map[ch] for ch in channels if ch in channel_map]
     
     def _encrypt_payload(self, payload: bytes, password: str) -> bytes:
         """Encrypt payload using AES encryption."""

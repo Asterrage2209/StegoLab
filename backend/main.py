@@ -24,9 +24,23 @@ app = FastAPI(
 )
 
 # CORS middleware for frontend communication
+# CORS middleware for frontend communication (dev-friendly defaults)
+allowed_origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+
+# Support overriding allowed origins via environment variable (comma-separated)
+env_origins = os.getenv("ALLOWED_ORIGINS")
+if env_origins:
+    # Split by comma and strip whitespace
+    allowed_origins = [o.strip() for o in env_origins.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -206,15 +220,16 @@ async def analyze_image(image: UploadFile = File(...)):
         image_path = os.path.join(TEMP_DIR, f"analyze_{image.filename}")
         with open(image_path, "wb") as buffer:
             shutil.copyfileobj(image.file, buffer)
-        
+
         # Perform analysis
         result = analysis_engine.analyze(image_path)
-        
+
         # Clean up
         os.remove(image_path)
-        
-        return result
-        
+
+        # Ensure frontend status rendering works
+        return {"success": True, **result}
+
     except Exception as e:
         # Clean up on error
         if 'image_path' in locals() and os.path.exists(image_path):

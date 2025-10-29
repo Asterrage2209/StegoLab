@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Shield, Eye, Search, Play, Home } from 'lucide-react';
+import { Shield, Eye, Home } from 'lucide-react';
 
 const Navbar = () => {
   const location = useLocation();
@@ -9,8 +9,6 @@ const Navbar = () => {
     { path: '/', label: 'Home', icon: Home },
     { path: '/embed', label: 'Embed', icon: Shield },
     { path: '/extract', label: 'Extract', icon: Eye },
-    { path: '/analyze', label: 'Analyze', icon: Search },
-    { path: '/demo', label: 'Demo', icon: Play },
   ];
   
   return (

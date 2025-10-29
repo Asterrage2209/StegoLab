@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { Shield, Eye, Search, Play, ArrowRight, AlertTriangle } from 'lucide-react';
+import { Shield, Eye, ArrowRight, AlertTriangle } from 'lucide-react';
 
 const Home = () => {
   const features = [
@@ -18,20 +18,7 @@ const Home = () => {
       link: '/extract',
       color: 'text-green-600 bg-green-100'
     },
-    {
-      icon: Search,
-      title: 'Analyze Images',
-      description: 'Detect potential steganographic content using statistical analysis',
-      link: '/analyze',
-      color: 'text-purple-600 bg-purple-100'
-    },
-    {
-      icon: Play,
-      title: 'Try Demo',
-      description: 'Explore sample images and test the application features',
-      link: '/demo',
-      color: 'text-orange-600 bg-orange-100'
-    }
+    // Analyze and Demo features removed
   ];
   
   return (
@@ -56,7 +43,7 @@ const Home = () => {
       </div>
       
       {/* Features Grid */}
-      <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-12 max-w-4xl mx-auto">
         {features.map((feature, index) => {
           const Icon = feature.icon;
           return (
