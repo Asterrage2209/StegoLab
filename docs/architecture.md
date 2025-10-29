@@ -2,7 +2,7 @@
 
 ## System Overview
 
-StegoLab is a full-stack web application built with a microservices architecture, consisting of a React frontend and a FastAPI backend. The system implements LSB (Least Significant Bit) steganography for data hiding and statistical steganalysis for detection.
+StegoLab is a full-stack web application with a React (Vite) frontend and a FastAPI backend. It implements LSB (Least Significant Bit) steganography for data hiding and extraction. The previous Analyze and Demo pages have been removed from the UI to streamline the experience. A steganalysis module remains in the backend for experimentation but is not exposed in the UI.
 
 ## Architecture Diagram
 
@@ -10,13 +10,14 @@ StegoLab is a full-stack web application built with a microservices architecture
 ┌─────────────────┐    HTTP/REST    ┌─────────────────┐
 │   React Frontend │ ◄─────────────► │  FastAPI Backend │
 │   (Port 3000)    │                 │   (Port 8000)    │
-└─────────────────┘                 └─────────────────┘
-         │                                    │
-         │                                    │
-         ▼                                    ▼
-┌─────────────────┐                 ┌─────────────────┐
-│   Static Assets │                 │  Steganography  │
-│   (Images, CSS) │                 │     Engine      │
+┌─────────────────┐                 └─────────────────┘
+                                             │
+                                             ▼
+                                   ┌─────────────────┐
+                                   │ Steganalysis    │
+                                   │     Engine      │
+                                   └─────────────────┘
+                                    (backend only; experimental)
 └─────────────────┘                 └─────────────────┘
                                               │
                                               ▼
@@ -29,33 +30,32 @@ StegoLab is a full-stack web application built with a microservices architecture
 ## Frontend Architecture
 
 ### Technology Stack
-- **React 18**: Modern React with hooks and functional components
-- **React Router**: Client-side routing for SPA navigation
-- **Tailwind CSS**: Utility-first CSS framework for styling
-- **Axios**: HTTP client for API communication
-- **React Dropzone**: File upload handling
-- **React Hot Toast**: User notification system
+- React 18 (functional components with hooks)
+- React Router
+- Tailwind CSS
+- Axios
+- React Dropzone
+- React Hot Toast
+- Vite (dev server and build)
 
 ### Component Structure
 ```
 src/
-├── components/           # Reusable UI components
-│   ├── Navbar.js        # Navigation component
-│   ├── FileUploader.js  # File upload with drag & drop
-│   ├── ImagePreview.js  # Image display with controls
-│   ├── StepsWizard.js   # Multi-step process wizard
-│   ├── OptionPanel.js   # Configuration options
-│   └── ResultCard.js    # Results display
-├── pages/               # Main application pages
-│   ├── Home.js          # Landing page with overview
-│   ├── Embed.js         # Data embedding interface
-│   ├── Extract.js       # Data extraction interface
-│   ├── Analyze.js       # Image analysis interface
-│   └── Demo.js          # Demo and examples
-├── utils/               # Utility functions
-│   └── api.js          # API client and endpoints
-└── styles/             # Styling and themes
-    └── index.css       # Global styles and Tailwind
+├── components/             # Reusable UI components
+│   ├── Navbar.jsx         # Navigation component
+│   ├── FileUploader.jsx   # File upload with drag & drop
+│   ├── ImagePreview.jsx   # Image display with controls
+│   ├── StepsWizard.jsx    # Multi-step process wizard (used in Embed)
+│   ├── OptionPanel.jsx    # Configuration options
+│   └── ResultCard.jsx     # Results display
+├── pages/                  # Main application pages
+│   ├── Home.jsx           # Landing page
+│   ├── Embed.jsx          # Data embedding interface
+│   └── Extract.jsx        # Data extraction interface
+├── utils/
+│   └── api.jsx            # Axios client and endpoints
+└── styles/
+  └── index.css          # Global styles and Tailwind
 ```
 
 ### State Management
@@ -67,35 +67,33 @@ src/
 ## Backend Architecture
 
 ### Technology Stack
-- **FastAPI**: Modern Python web framework with automatic API documentation
-- **Pydantic**: Data validation and serialization
-- **Pillow**: Python Imaging Library for image processing
-- **NumPy**: Numerical computing for array operations
-- **OpenCV**: Computer vision library for advanced image processing
-- **scikit-image**: Image processing algorithms
-- **cryptography**: Secure encryption and hashing
+- FastAPI
+- Pydantic
+- Pillow, NumPy
+- OpenCV, scikit-image (for analysis utilities)
+- cryptography (Fernet encryption; PBKDF2 key derivation)
 
 ### Core Modules
 
 #### 1. Steganography Engine (`steganography.py`)
 ```python
 class SteganographyEngine:
-    def embed(carrier_path, payload_data, bits, channels, password, encrypt)
-    def extract(stego_path, bits, channels, password, encrypt)
-    def _calculate_capacity(img, bits, num_channels)
-    def _create_payload_with_header(payload_data, encrypt, password)
-    def _generate_embedding_positions(img_shape, data_length, password)
-    def _embed_data(img_array, data, positions, bits, channels)
-    def _extract_data(img_array, positions, bits, channels, length)
-    def _encrypt_payload(payload, password)
-    def _decrypt_payload(encrypted_payload, password)
+  def embed(carrier_path, payload_data, bits, channels, password, encrypt)
+  def extract(stego_path, bits, channels, password, encrypt)
+  def _calculate_capacity(img, bits, num_channels)
+  def _create_payload_with_header(payload_data, plaintext_crc32=None)
+  def _generate_embedding_positions(img_shape, positions_needed, password, selected_channels, start_index)
+  def _embed_data(img_array, data, positions, bits)
+  def _extract_data(img_array, positions, bits, length_bytes)
+  def _encrypt_payload(payload, password)
+  def _decrypt_payload(encrypted_payload, password)
 ```
 
 **Key Features:**
-- Header-based payload management (16-byte header with magic, length, CRC32)
-- Support for 1-2 LSBs per channel
-- Password-based position permutation
-- AES-GCM encryption for payload security
+- 16-byte header (magic, length, CRC32, reserved)
+- 1–2 LSBs per selected channel (R/G/B)
+- Optional password-based position permutation (deterministic shuffle)
+- Encryption via Fernet (AES + HMAC with PBKDF2-derived key); header remains plaintext
 - Capacity calculation and validation
 - PSNR and SSIM quality metrics
 
@@ -111,19 +109,20 @@ class SteganalysisEngine:
     def _generate_explanation(chi_square_results, rs_results, bitplane_results, confidence)
 ```
 
-**Detection Methods:**
-- **Chi-Square Test**: Analyzes LSB distribution for statistical anomalies
-- **RS Analysis**: Examines sample pairs for LSB manipulation patterns
-- **Bit-plane Analysis**: Compares noise variance across bit-planes
-- **Visual Analysis**: Generates histograms and bit-plane visualizations
+Note: The steganalysis module is retained for experimentation and is not used in the current UI.
+
+**Detection Methods (experimental):**
+- Chi-Square Test
+- RS Analysis
+- Bit-plane Analysis and visualization
 
 #### 3. API Layer (`main.py`)
 ```python
 # REST API Endpoints
 POST /api/embed      # Embed data into image
 POST /api/extract    # Extract data from image
-POST /api/analyze    # Analyze image for steganography
 GET  /api/demo-images # Get demo image list
+POST /api/analyze    # Experimental: analyze image (not used by UI)
 ```
 
 **Request/Response Flow:**
@@ -151,13 +150,10 @@ GET  /api/demo-images # Get demo image list
 5. **Response**: Returns extracted payload (text or binary)
 6. **Frontend**: Displays extracted content or download link
 
-### Analysis Process
-1. **Frontend**: User uploads image for analysis
-2. **API**: Validates image format and size
-3. **Engine**: Runs statistical detectors (chi-square, RS, bit-plane)
-4. **Processing**: Generates visualizations and confidence score
-5. **Response**: Returns analysis results and visualization images
-6. **Frontend**: Displays confidence score and detailed analysis
+### Analysis Process (experimental, backend only)
+1. API receives image
+2. Engine runs detectors and builds visualizations
+3. Response returns stats and base64 images (not displayed in UI)
 
 ## Security Architecture
 
@@ -175,12 +171,23 @@ GET  /api/demo-images # Get demo image list
 
 ### CORS Configuration
 ```python
+allowed_origins = [
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+]
+
+env_origins = os.getenv("ALLOWED_ORIGINS")
+if env_origins:
+  allowed_origins = [o.strip() for o in env_origins.split(",") if o.strip()]
+
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+  CORSMiddleware,
+  allow_origins=allowed_origins,
+  allow_credentials=True,
+  allow_methods=["*"],
+  allow_headers=["*"],
 )
 ```
 
@@ -200,7 +207,7 @@ app.add_middleware(
 
 ## Deployment Architecture
 
-### Docker Configuration
+### Docker Configuration (example)
 ```yaml
 services:
   backend:
@@ -216,7 +223,7 @@ services:
     build: ./frontend
     ports: ["3000:3000"]
     environment:
-      - REACT_APP_API_URL=http://localhost:8000
+      - VITE_API_BASE_URL=http://localhost:8000
     depends_on:
       - backend
     restart: unless-stopped
